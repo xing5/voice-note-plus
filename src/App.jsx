@@ -282,18 +282,17 @@ function App() {
     <div className="flex flex-col h-screen mx-auto justify-end text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-900">
       {
         <div className="h-full overflow-auto scrollbar-thin flex justify-center items-center flex-col relative">
-          <div className="flex flex-col items-center mb-1 max-w-[400px] text-center">
-            <img src="logo.png" width="50%" height="auto" className="block"></img>
-            <h1 className="text-4xl font-bold mb-1">Whisper WebGPU</h1>
-            <h2 className="text-xl font-semibold">Real-time in-browser speech recognition</h2>
+          <div className="flex flex-col items-center mb-6 max-w-[500px] text-center">
+            <h1 className="text-4xl font-bold mb-1">VoiceInput+</h1>
+            <h2 className="text-xl font-semibold">AI-powered voice to polished text</h2>
           </div>
 
-          <div className="flex flex-col items-center px-4">
+          <div className="flex flex-col items-center px-4 w-full max-w-[600px]">
             {status === null && (
               <>
                 <p className="max-w-[480px] mb-4">
                   <br />
-                  You are about to load{" "}
+                  VoiceInput+ converts your voice into polished text. It uses{" "}
                   <a
                     href="https://huggingface.co/onnx-community/whisper-base"
                     target="_blank"
@@ -301,9 +300,8 @@ function App() {
                     className="font-medium underline"
                   >
                     whisper-base
-                  </a>
-                  , a 73 million parameter speech recognition model that is optimized for inference on the web. Once
-                  downloaded, the model (~200&nbsp;MB) will be cached and reused when you revisit the page.
+                  </a>{" "}
+                  for transcription and a text polishing model to refine your speech.
                   <br />
                   <br />
                   Everything runs directly in your browser using{" "}
@@ -315,54 +313,80 @@ function App() {
                   >
                     🤗&nbsp;Transformers.js
                   </a>{" "}
-                  and ONNX Runtime Web, meaning no data is sent to a server. You can even disconnect from the internet
-                  after the model has loaded!
+                  and WebGPU, meaning no data is sent to a server.
                 </p>
 
                 <button
-                  className="border px-4 py-2 rounded-lg bg-blue-400 text-white hover:bg-blue-500 disabled:bg-blue-100 disabled:cursor-not-allowed select-none"
+                  className="border px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:bg-blue-200 disabled:cursor-not-allowed select-none"
                   onClick={() => {
                     worker.current.postMessage({ type: "load" });
                     setStatus("loading");
                   }}
                   disabled={status !== null}
                 >
-                  Load model
+                  Load models
                 </button>
               </>
             )}
 
-            <div className="w-[500px] p-2">
-              <AudioVisualizer className="w-full rounded-lg" stream={stream} />
-              {status === "ready" && (
-                <div className="relative">
-                  <p className="w-full h-[120px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-2">{text}</p>
-                  {tps && <span className="absolute bottom-0 right-0 px-1">{tps.toFixed(2)} tok/s</span>}
+            {status === "loading" && (
+              <div className="w-full max-w-[500px] text-left mx-auto p-4">
+                <p className="text-center">{loadingMessage}</p>
+                {progressItems.map(({ file, progress, total }, i) => (
+                  <Progress key={i} text={file} percentage={progress} total={total} />
+                ))}
+              </div>
+            )}
+
+            {status === "ready" && !recording && (
+              <div className="flex flex-col items-center">
+                <button
+                  onClick={startRecording}
+                  className="w-20 h-20 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition-all duration-200 shadow-lg hover:shadow-xl"
+                  aria-label="Start recording"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                </button>
+                <p className="mt-4 text-lg">Click to start speaking</p>
+                
+                <div className="mt-6">
+                  <LanguageSelector
+                    language={language}
+                    setLanguage={setLanguage}
+                  />
                 </div>
-              )}
-            </div>
-            {status === "ready" && (
-              <div className="relative w-full flex justify-center">
-                <LanguageSelector
-                  language={language}
-                  setLanguage={(e) => {
-                    recorderRef.current?.stop();
-                    setLanguage(e);
-                    recorderRef.current?.start();
-                  }}
-                />
-                <div className="flex gap-2 absolute right-2">
+              </div>
+            )}
+
+            {status === "ready" && recording && (
+              <div className="w-full max-w-[600px] flex flex-col items-center">
+                <div className="w-full mb-4">
+                  <AudioVisualizer className="w-full h-16 rounded-lg" stream={stream} />
+                </div>
+                
+                <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
+                  <h3 className="text-lg font-semibold mb-2">Transcription</h3>
+                  <div className="relative">
+                    <p className="w-full h-[150px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-3 bg-gray-50 dark:bg-gray-700">
+                      {text || "Listening..."}
+                    </p>
+                    {tps && <span className="absolute bottom-2 right-2 px-1 text-xs bg-gray-100 dark:bg-gray-600 rounded">{tps.toFixed(2)} tok/s</span>}
+                  </div>
+                </div>
+                
+                <div className="flex gap-3">
                   <button
-                    onClick={recording ? stopRecording : startRecording}
-                    className={`border rounded-lg px-2 ${
-                      recording ? "bg-red-500 text-white" : "bg-blue-500 text-white"
-                    }`}
+                    onClick={stopRecording}
+                    className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
                   >
-                    {recording ? "Stop Speaking" : "Start Speaking"}
+                    Stop Speaking
                   </button>
                   <button
-                    className="border rounded-lg px-2"
+                    className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                     onClick={() => {
+                      setText("");
                       recorderRef.current?.stop();
                       recorderRef.current?.start();
                     }}
@@ -370,14 +394,17 @@ function App() {
                     Reset
                   </button>
                 </div>
-              </div>
-            )}
-            {status === "loading" && (
-              <div className="w-full max-w-[500px] text-left mx-auto p-4">
-                <p className="text-center">{loadingMessage}</p>
-                {progressItems.map(({ file, progress, total }, i) => (
-                  <Progress key={i} text={file} percentage={progress} total={total} />
-                ))}
+                
+                <div className="mt-4">
+                  <LanguageSelector
+                    language={language}
+                    setLanguage={(e) => {
+                      recorderRef.current?.stop();
+                      setLanguage(e);
+                      recorderRef.current?.start();
+                    }}
+                  />
+                </div>
               </div>
             )}
           </div>
