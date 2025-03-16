@@ -37,6 +37,10 @@ function App() {
   // Add a new state for tracking if we have an active recorder
   const [hasRecorder, setHasRecorder] = useState(false);
 
+  // Add a new state for polished text
+  const [polishedText, setPolishedText] = useState("");
+  const [isPolishing, setIsPolishing] = useState(false);
+
   // We use the `useEffect` hook to setup the worker as soon as the `App` component is mounted.
   useEffect(() => {
     if (!worker.current) {
@@ -110,6 +114,17 @@ function App() {
             return prev + separator + e.data.output;
           });
           break;
+
+        case "polishing":
+          // Text polishing has started
+          setIsPolishing(true);
+          break;
+
+        case "polished":
+          // Text polishing is complete
+          setIsPolishing(false);
+          setPolishedText(e.data.polishedText);
+          break;
       }
     };
 
@@ -164,7 +179,7 @@ function App() {
     }
   };
 
-  // Modify the stopRecording function to release resources
+  // Modify the stopRecording function to release resources and trigger text polishing
   const stopRecording = () => {
     if (recorderRef.current && recording) {
       recorderRef.current.stop();
@@ -183,6 +198,16 @@ function App() {
 
       setTranscribedMarker(0);
       setHasRecorder(false);
+      
+      // Only polish if we have transcription text
+      if (text.trim()) {
+        setIsPolishing(true);
+        // Send the full transcription to the worker for polishing
+        worker.current.postMessage({
+          type: "polish",
+          data: { text }
+        });
+      }
     }
   };
 
@@ -278,6 +303,19 @@ function App() {
     return false;
   };
 
+  // Add a function to copy text to clipboard
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(
+      () => {
+        // You could add a toast notification here
+        console.log("Text copied to clipboard");
+      },
+      (err) => {
+        console.error("Could not copy text: ", err);
+      }
+    );
+  };
+
   return IS_WEBGPU_AVAILABLE ? (
     <div className="flex flex-col h-screen mx-auto justify-end text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-900">
       {
@@ -338,7 +376,7 @@ function App() {
               </div>
             )}
 
-            {status === "ready" && !recording && (
+            {status === "ready" && !recording && !polishedText && (
               <div className="flex flex-col items-center">
                 <button
                   onClick={startRecording}
@@ -395,6 +433,60 @@ function App() {
                     }}
                   />
                 </div>
+              </div>
+            )}
+
+            {status === "ready" && !recording && (polishedText || isPolishing) && (
+              <div className="w-full max-w-[600px] flex flex-col items-center">
+                {/* Original transcription card */}
+                <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
+                  <h3 className="text-lg font-semibold mb-2">Original Transcription</h3>
+                  <div className="relative">
+                    <p className="w-full h-[100px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-3 bg-gray-50 dark:bg-gray-700">
+                      {text}
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Polished text card */}
+                <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-lg font-semibold">Polished Text</h3>
+                    {polishedText && (
+                      <button 
+                        onClick={() => copyToClipboard(polishedText)}
+                        className="text-blue-500 hover:text-blue-700 flex items-center"
+                        aria-label="Copy to clipboard"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                        Copy
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <p className="w-full h-[100px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-3 bg-gray-50 dark:bg-gray-700">
+                      {isPolishing ? (
+                        <span className="text-gray-500">Polishing your text...</span>
+                      ) : (
+                        polishedText
+                      )}
+                    </p>
+                  </div>
+                </div>
+                
+                {/* New recording button */}
+                <button
+                  onClick={() => {
+                    setText("");
+                    setPolishedText("");
+                    startRecording();
+                  }}
+                  className="px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                >
+                  New Recording
+                </button>
               </div>
             )}
           </div>
