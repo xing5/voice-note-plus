@@ -33,6 +33,9 @@ function App() {
   const [stream, setStream] = useState(null);
   const audioContextRef = useRef(null);
 
+  // Add a new state for tracking if we have an active recorder
+  const [hasRecorder, setHasRecorder] = useState(false);
+
   // We use the `useEffect` hook to setup the worker as soon as the `App` component is mounted.
   useEffect(() => {
     if (!worker.current) {
@@ -115,49 +118,66 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (recorderRef.current) return; // Already set
+  // Modify the startRecording function to create the recorder on demand
+  const startRecording = async () => {
+    try {
+      if (!hasRecorder) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        setStream(stream);
+        
+        recorderRef.current = new MediaRecorder(stream);
+        audioContextRef.current = new AudioContext({
+          sampleRate: WHISPER_SAMPLING_RATE,
+        });
 
-    if (navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then((stream) => {
-          setStream(stream);
+        recorderRef.current.onstart = () => {
+          setRecording(true);
+          setChunks([]);
+        };
+        recorderRef.current.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            setChunks((prev) => [...prev, e.data]);
+          } else {
+            // Empty chunk received, so we request new data after a short timeout
+            setTimeout(() => {
+              recorderRef.current.requestData();
+            }, 25);
+          }
+        };
 
-          recorderRef.current = new MediaRecorder(stream);
-          audioContextRef.current = new AudioContext({
-            sampleRate: WHISPER_SAMPLING_RATE,
-          });
-
-          recorderRef.current.onstart = () => {
-            setRecording(true);
-            setChunks([]);
-          };
-          recorderRef.current.ondataavailable = (e) => {
-            if (e.data.size > 0) {
-              setChunks((prev) => [...prev, e.data]);
-            } else {
-              // Empty chunk received, so we request new data after a short timeout
-              setTimeout(() => {
-                recorderRef.current.requestData();
-              }, 25);
-            }
-          };
-
-          recorderRef.current.onstop = () => {
-            setRecording(false);
-          };
-        })
-        .catch((err) => console.error("The following error occurred: ", err));
-    } else {
-      console.error("getUserMedia not supported on your browser!");
+        recorderRef.current.onstop = () => {
+          setRecording(false);
+        };
+        
+        setHasRecorder(true);
+      }
+      
+      recorderRef.current.start(10);
+    } catch (err) {
+      console.error("Error starting recording:", err);
     }
+  };
 
-    return () => {
-      recorderRef.current?.stop();
+  // Modify the stopRecording function to release resources
+  const stopRecording = () => {
+    if (recorderRef.current && recording) {
+      recorderRef.current.stop();
+      
+      // Release resources
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        setStream(null);
+      }
+      
       recorderRef.current = null;
-    };
-  }, []);
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+      
+      setHasRecorder(false);
+    }
+  };
 
   useEffect(() => {
     if (!recorderRef.current) return;
@@ -181,6 +201,7 @@ function App() {
           audio = audio.slice(-MAX_SAMPLES);
         }
 
+        console.log("sending audio to worker: ", audio);
         worker.current.postMessage({
           type: "generate",
           data: { audio, language },
@@ -281,15 +302,23 @@ function App() {
                     recorderRef.current?.start();
                   }}
                 />
-                <button
-                  className="border rounded-lg px-2 absolute right-2"
-                  onClick={() => {
-                    recorderRef.current?.stop();
-                    recorderRef.current?.start();
-                  }}
-                >
-                  Reset
-                </button>
+                <div className="flex gap-2 absolute right-2">
+                  <button
+                    onClick={recording ? stopRecording : startRecording}
+                    className={`border rounded-lg px-2 ${recording ? "bg-red-500 text-white" : "bg-blue-500 text-white"}`}
+                  >
+                    {recording ? "Stop Speaking" : "Start Speaking"}
+                  </button>
+                  <button
+                    className="border rounded-lg px-2"
+                    onClick={() => {
+                      recorderRef.current?.stop();
+                      recorderRef.current?.start();
+                    }}
+                  >
+                    Reset
+                  </button>
+                </div>
               </div>
             )}
             {status === "loading" && (
