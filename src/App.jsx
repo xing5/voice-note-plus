@@ -31,6 +31,7 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [chunks, setChunks] = useState([]);
   const [stream, setStream] = useState(null);
+  const [transcribedMarker, setTranscribedMarker] = useState(0);
   const audioContextRef = useRef(null);
 
   // Add a new state for tracking if we have an active recorder
@@ -66,15 +67,13 @@ function App() {
                 return { ...item, ...e.data };
               }
               return item;
-            }),
+            })
           );
           break;
 
         case "done":
           // Model file loaded: remove the progress item from the list.
-          setProgressItems((prev) =>
-            prev.filter((item) => item.file !== e.data.file),
-          );
+          setProgressItems((prev) => prev.filter((item) => item.file !== e.data.file));
           break;
 
         case "ready":
@@ -104,7 +103,12 @@ function App() {
         case "complete":
           // Generation complete: re-enable the "Generate" button
           setIsProcessing(false);
-          setText(e.data.output);
+          // Append the new transcription to the accumulated text
+          setText(prev => {
+            // Add a space between transcriptions if needed
+            const separator = prev && e.data.output ? " " : "";
+            return prev + separator + e.data.output;
+          });
           break;
       }
     };
@@ -118,13 +122,13 @@ function App() {
     };
   }, []);
 
-  // Modify the startRecording function to create the recorder on demand
+  // Modify the startRecording function to reset transcriptions for a new session
   const startRecording = async () => {
     try {
       if (!hasRecorder) {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         setStream(stream);
-        
+
         recorderRef.current = new MediaRecorder(stream);
         audioContextRef.current = new AudioContext({
           sampleRate: WHISPER_SAMPLING_RATE,
@@ -133,6 +137,8 @@ function App() {
         recorderRef.current.onstart = () => {
           setRecording(true);
           setChunks([]);
+          // Clear transcriptions for new recording session
+          setText("");
         };
         recorderRef.current.ondataavailable = (e) => {
           if (e.data.size > 0) {
@@ -141,17 +147,17 @@ function App() {
             // Empty chunk received, so we request new data after a short timeout
             setTimeout(() => {
               recorderRef.current.requestData();
-            }, 25);
+            }, 1000);
           }
         };
 
         recorderRef.current.onstop = () => {
           setRecording(false);
         };
-        
+
         setHasRecorder(true);
       }
-      
+
       recorderRef.current.start(10);
     } catch (err) {
       console.error("Error starting recording:", err);
@@ -162,19 +168,20 @@ function App() {
   const stopRecording = () => {
     if (recorderRef.current && recording) {
       recorderRef.current.stop();
-      
+
       // Release resources
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
         setStream(null);
       }
-      
+
       recorderRef.current = null;
       if (audioContextRef.current) {
         audioContextRef.current.close();
         audioContextRef.current = null;
       }
-      
+
+      setTranscribedMarker(0);
       setHasRecorder(false);
     }
   };
@@ -193,19 +200,37 @@ function App() {
 
       fileReader.onloadend = async () => {
         const arrayBuffer = fileReader.result;
-        const decoded =
-          await audioContextRef.current.decodeAudioData(arrayBuffer);
+        const decoded = await audioContextRef.current.decodeAudioData(arrayBuffer);
         let audio = decoded.getChannelData(0);
-        if (audio.length > MAX_SAMPLES) {
-          // Get last MAX_SAMPLES
-          audio = audio.slice(-MAX_SAMPLES);
+        
+        // Get the new audio segment since last transcription
+        const newAudioSegment = audio.slice(transcribedMarker);
+        
+        // Check if the segment contains any non-silent audio
+        const hasNonSilentAudio = containsNonSilentAudio(newAudioSegment);
+        
+        // Only proceed if there's actual audio content or we've reached max length
+        if (hasNonSilentAudio || newAudioSegment.length > MAX_SAMPLES) {
+          // Check if we should transcribe based on:
+          // 1. Max length reached, or
+          // 2. Silence detected at the end (indicating potential end of sentence)
+          const shouldTranscribe = 
+            newAudioSegment.length > MAX_SAMPLES || 
+            hasSilenceAtEnd(newAudioSegment);
+          
+          if (shouldTranscribe) {
+            console.log("sending audio to worker. marker:length is ", transcribedMarker, audio.length);
+            // Send the entire segment since last transcription
+            worker.current.postMessage({
+              type: "generate",
+              data: { audio: newAudioSegment, language },
+            });
+            setTranscribedMarker(audio.length);
+          }
+        } else {
+          // If it's all silence, just update the marker without transcribing
+          setTranscribedMarker(audio.length);
         }
-
-        console.log("sending audio to worker: ", audio);
-        worker.current.postMessage({
-          type: "generate",
-          data: { audio, language },
-        });
       };
       fileReader.readAsArrayBuffer(blob);
     } else {
@@ -213,21 +238,54 @@ function App() {
     }
   }, [status, recording, isProcessing, chunks, language]);
 
+  // Helper function to check if audio contains any non-silent content
+  const containsNonSilentAudio = (audioData, silenceThreshold = 0.01) => {
+    for (let i = 0; i < audioData.length; i++) {
+      if (Math.abs(audioData[i]) > silenceThreshold) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Function to detect if there's silence at the end of the audio
+  const hasSilenceAtEnd = (audioData, silenceThreshold = 0.01, minSilenceDuration = 500) => {
+    if (audioData.length === 0) return false;
+    
+    const sampleRate = audioContextRef.current?.sampleRate || 44100;
+    const samplesForMinDuration = Math.floor(minSilenceDuration * sampleRate / 1000);
+    
+    // Only check the end portion of the audio for silence
+    const endSamples = Math.min(audioData.length, samplesForMinDuration * 2);
+    const audioToCheck = audioData.slice(audioData.length - endSamples);
+    
+    let consecutiveSilentSamples = 0;
+    
+    // Check for silence at the end
+    for (let i = 0; i < audioToCheck.length; i++) {
+      if (Math.abs(audioToCheck[i]) < silenceThreshold) {
+        consecutiveSilentSamples++;
+        
+        // If we found enough consecutive silent samples
+        if (consecutiveSilentSamples >= samplesForMinDuration) {
+          return true;
+        }
+      } else {
+        consecutiveSilentSamples = 0;
+      }
+    }
+    
+    return false;
+  };
+
   return IS_WEBGPU_AVAILABLE ? (
     <div className="flex flex-col h-screen mx-auto justify-end text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-900">
       {
         <div className="h-full overflow-auto scrollbar-thin flex justify-center items-center flex-col relative">
           <div className="flex flex-col items-center mb-1 max-w-[400px] text-center">
-            <img
-              src="logo.png"
-              width="50%"
-              height="auto"
-              className="block"
-            ></img>
+            <img src="logo.png" width="50%" height="auto" className="block"></img>
             <h1 className="text-4xl font-bold mb-1">Whisper WebGPU</h1>
-            <h2 className="text-xl font-semibold">
-              Real-time in-browser speech recognition
-            </h2>
+            <h2 className="text-xl font-semibold">Real-time in-browser speech recognition</h2>
           </div>
 
           <div className="flex flex-col items-center px-4">
@@ -244,10 +302,8 @@ function App() {
                   >
                     whisper-base
                   </a>
-                  , a 73 million parameter speech recognition model that is
-                  optimized for inference on the web. Once downloaded, the model
-                  (~200&nbsp;MB) will be cached and reused when you revisit the
-                  page.
+                  , a 73 million parameter speech recognition model that is optimized for inference on the web. Once
+                  downloaded, the model (~200&nbsp;MB) will be cached and reused when you revisit the page.
                   <br />
                   <br />
                   Everything runs directly in your browser using{" "}
@@ -259,9 +315,8 @@ function App() {
                   >
                     🤗&nbsp;Transformers.js
                   </a>{" "}
-                  and ONNX Runtime Web, meaning no data is sent to a server. You
-                  can even disconnect from the internet after the model has
-                  loaded!
+                  and ONNX Runtime Web, meaning no data is sent to a server. You can even disconnect from the internet
+                  after the model has loaded!
                 </p>
 
                 <button
@@ -281,14 +336,8 @@ function App() {
               <AudioVisualizer className="w-full rounded-lg" stream={stream} />
               {status === "ready" && (
                 <div className="relative">
-                  <p className="w-full h-[80px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-2">
-                    {text}
-                  </p>
-                  {tps && (
-                    <span className="absolute bottom-0 right-0 px-1">
-                      {tps.toFixed(2)} tok/s
-                    </span>
-                  )}
+                  <p className="w-full h-[120px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-2">{text}</p>
+                  {tps && <span className="absolute bottom-0 right-0 px-1">{tps.toFixed(2)} tok/s</span>}
                 </div>
               )}
             </div>
@@ -305,7 +354,9 @@ function App() {
                 <div className="flex gap-2 absolute right-2">
                   <button
                     onClick={recording ? stopRecording : startRecording}
-                    className={`border rounded-lg px-2 ${recording ? "bg-red-500 text-white" : "bg-blue-500 text-white"}`}
+                    className={`border rounded-lg px-2 ${
+                      recording ? "bg-red-500 text-white" : "bg-blue-500 text-white"
+                    }`}
                   >
                     {recording ? "Stop Speaking" : "Start Speaking"}
                   </button>
@@ -325,12 +376,7 @@ function App() {
               <div className="w-full max-w-[500px] text-left mx-auto p-4">
                 <p className="text-center">{loadingMessage}</p>
                 {progressItems.map(({ file, progress, total }, i) => (
-                  <Progress
-                    key={i}
-                    text={file}
-                    percentage={progress}
-                    total={total}
-                  />
+                  <Progress key={i} text={file} percentage={progress} total={total} />
                 ))}
               </div>
             )}
