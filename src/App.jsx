@@ -383,16 +383,6 @@ function App() {
                   >
                     Stop Speaking
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                    onClick={() => {
-                      setText("");
-                      recorderRef.current?.stop();
-                      recorderRef.current?.start();
-                    }}
-                  >
-                    Reset
-                  </button>
                 </div>
                 
                 <div className="mt-4">
