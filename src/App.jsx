@@ -120,6 +120,15 @@ function App() {
           setIsPolishing(true);
           break;
 
+        case "polishing_update":
+          // Streaming update from the polishing process
+          setIsPolishing(true);
+          setPolishedText(prev => {
+            const separator = prev && e.data.output ? " " : "";
+            return prev + separator + e.data.polishedText;
+          })
+          break;
+
         case "polished":
           // Text polishing is complete
           setIsPolishing(false);
@@ -467,11 +476,7 @@ function App() {
                   </div>
                   <div className="relative">
                     <p className="w-full h-[100px] overflow-y-auto overflow-wrap-anywhere border rounded-lg p-3 bg-gray-50 dark:bg-gray-700">
-                      {isPolishing ? (
-                        <span className="text-gray-500">Polishing your text...</span>
-                      ) : (
-                        polishedText
-                      )}
+                      {polishedText}
                     </p>
                   </div>
                 </div>

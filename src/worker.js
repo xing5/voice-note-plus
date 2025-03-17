@@ -4,6 +4,7 @@ import {
   WhisperForConditionalGeneration,
   TextStreamer,
   AutoModelForCausalLM,
+  InterruptableStoppingCriteria,
   full,
 } from "@huggingface/transformers";
 
@@ -43,10 +44,10 @@ class AutomaticSpeechRecognitionPipeline {
 }
 
 /**
- * Text polishing pipeline using DeepSeek model
+ * Text polishing pipeline using Llama 3.2 model
  */
 class TextPolishingPipeline {
-  static model_id = "onnx-community/DeepSeek-R1-Distill-Qwen-1.5B-ONNX";
+  static model_id = "onnx-community/Llama-3.2-1B-Instruct-q4f16";
   static tokenizer = null;
   static model = null;
 
@@ -67,6 +68,8 @@ class TextPolishingPipeline {
     return Promise.all([this.tokenizer, this.model]);
   }
 }
+
+const stopping_criteria = new InterruptableStoppingCriteria();
 
 let processing = false;
 async function generate({ audio, language }) {
@@ -90,7 +93,7 @@ async function generate({ audio, language }) {
       tps = (numTokens / (performance.now() - startTime)) * 1000;
     }
   };
-  const callback_function = (output) => {
+ const callback_function = (output) => {
     self.postMessage({
       status: "update",
       output,
@@ -117,12 +120,12 @@ async function generate({ audio, language }) {
 
   const decoded = tokenizer.batch_decode(outputs, {
     skip_special_tokens: true,
-  });
+  })[0];
 
   // Send the output back to the main thread
   self.postMessage({
     status: "complete",
-    output: decoded,
+    output: decoded.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, ''),
   });
   processing = false;
 }
@@ -130,68 +133,63 @@ async function generate({ audio, language }) {
 async function polishText({ text }) {
   // Tell the main thread we are starting polishing
   self.postMessage({ status: "polishing" });
-
-  // Retrieve the text-polishing pipeline
+  
+  // Retrieve the text-polishing pipeline.
   const [tokenizer, model] = await TextPolishingPipeline.getInstance();
 
-  // Get the thinking tokens
-  const [START_THINKING_TOKEN_ID, END_THINKING_TOKEN_ID] = tokenizer.encode(
-    "<think></think>",
-    { add_special_tokens: false },
-  );
+  // Create a structured prompt for Llama 3.2 Instruct model with very clear instructions
+  const messages = [
+    {
+      role: "system",
+      content: `You are a voice note assistant. Your task is to polish the transcribed text and convert messy thoughts into clear text. 
+      Please remove any filler words, fix grammar, and improve flow, restructure the text to make it clear.
+      Note: You must respond with ONLY the polished text, with absolutely no additional commentary, explanations, or formatting.
+      Example: 
+      Input: "Hello, hello, hello. I'm going to introduce Voice Input Plus. It's an AI-powered voice-to-polish text tool. It's running completely locally using your own CPU or GPU or whatever. And yeah, you can just open your browser and run it."
+      Output: "Hello! Let me tell you about Voice Input Plus. It's a smart tool that turns your spoken words into polished text. The best part? It works right on your computer using your CPU or GPU. Just open your browser and start using it!"
 
-  // Create a prompt that encourages the model to use thinking tokens
-  const prompt = `Transform the following transcribed voice note into a clear, concise, and readable summary suitable for written communication, such as messages, emails, or blog posts. Follow these steps:
-Clean the Transcript:
-- Remove filler words like 'um,' 'ah,' 'you know,' etc.
-- Correct any grammatical errors and fix incomplete sentences.
-- Ensure the text flows smoothly and is easy to read.
+      Input: "The other day I have an idea which is to create a memory capsule app. What it does is that you can throw in any text, images, videos, and you can even have a conversation with an AI assistant. He will try to poke you with questions, trying to dig out your deep thoughts and some little details of your emotions, whatever that is hard to express if you are on your own. Then capture all these things into a capsule which can be transformed into any content if needed. For example, it can be converted into a blog post, a TikTok share, Instagram post, etc. In the future, it's going to be super powerful that you might talk to a past yourself and you might immerse yourself into an old memory using new technology in the future. But at first, you need to start documenting your memory. That's why memory capsule is so important right now."
+      Output: "I recently had an idea for a memory capsule app. This app lets you save text, images, and videos. You can even chat with an AI assistant. The AI will ask questions to help you explore your thoughts and feelings, especially those that are hard to express alone.
 
-Summarize the Content:
-- Identify and capture the main points and key ideas from the transcript.
-- Rephrase the content into a concise and coherent narrative.
-- Present the summary in a paragraph format (or specify another format if needed, such as bullet points for quick notes).
-- Maintain the original tone and intent, but adjust the style to be suitable for written communication.
+All these memories get saved in a capsule. Later, you can turn this capsule into different types of content, like a blog post or a TikTok or Instagram post. In the future, the app could let you talk to your past self or relive old memories using new technology.
 
-Ensure Accuracy:
-- Base the summary solely on the provided transcript without adding external information or assumptions.
-- Preserve the original meaning and key details.
+But first, it's important to start capturing your memories now. That's why the memory capsule is so valuable today."
+      `
+    },
+    {
+      role: "user",
+      content: text
+    }
+  ];
 
-Additional Instructions (Optional):
-- If the summary is for a specific use (e.g., email, blog post), adjust the tone and format accordingly.
-- For longer transcripts, focus on high-level points unless detailed information is requested.
-- If the voice note contains technical terms or specific jargon, ensure they are retained in the summary.
-  
-Example:
-Input: Hello, hello, hello. I'm going to introduce Voice Input Plus. It's an AI-powered voice-to-polish text tool. It's running completely locally using your own CPU or GPU or whatever. And yeah, you can just open your browser and run it.
-Output: Hello! Let me tell you about Voice Input Plus. It's a smart tool that turns your spoken words into polished text. The best part? It works right on your computer using your CPU or GPU. Just open your browser and start using it!
+  // Apply the chat template to format the messages for the model
+  const inputs = tokenizer.apply_chat_template(messages, {
+    add_generation_prompt: true,
+    return_dict: true,
+  });
 
-Now given this original text: ${text}
-<think>`;
-
-  // Track the state (thinking or answering)
-  let state = "thinking"; // 'thinking' or 'answering'
   let startTime;
   let numTokens = 0;
   let tps;
   let finalOutput = "";
-  
+
   const token_callback_function = (tokens) => {
     startTime ??= performance.now();
 
     if (numTokens++ > 0) {
       tps = (numTokens / (performance.now() - startTime)) * 1000;
     }
-    
-    if (tokens[0] === END_THINKING_TOKEN_ID) {
-      state = "answering";
-    }
   };
   
-  const callback_function = (output) => {
-    if (state === "answering") {
-      finalOutput = output;
-    }
+  const callback_function = (token) => {
+    finalOutput += token;
+    // Send the accumulated output back to the main thread without any cleaning
+    self.postMessage({
+      status: "polishing_update",
+      polishedText: token,
+      tps,
+      numTokens,
+    });
   };
 
   const streamer = new TextStreamer(tokenizer, {
@@ -201,40 +199,29 @@ Now given this original text: ${text}
     token_callback_function,
   });
 
-  const outputs = await model.generate({
-    ...tokenizer(prompt, { return_tensors: "pt" }),
-    max_new_tokens: 2048,
-    temperature: 0.1,
-    top_p: 0.9,
-    streamer,
-  });
-
-  // If the streamer approach didn't capture the output correctly, fall back to manual extraction
-  if (!finalOutput || finalOutput.trim() === "") {
-    const decoded = tokenizer.decode(outputs[0], {
-      skip_special_tokens: true,
+  try {
+    await model.generate({
+      ...inputs,
+      do_sample: false,
+      max_new_tokens: 1024,
+      streamer,
+      stopping_criteria,
+      return_dict_in_generate: true,
     });
+
+    self.postMessage({
+      status: "polished",
+      polishedText: finalOutput,
+    });
+  } catch (error) {
+    console.error("Error during text polishing:", error);
     
-    // Try to extract content after the thinking section
-    const parts = decoded.split("</think>");
-    if (parts.length > 1) {
-      finalOutput = parts[1].trim();
-    } else {
-      finalOutput = decoded;
-    }
+    // Send an error message back to the main thread
+    self.postMessage({
+      status: "polished",
+      polishedText: "Error polishing text. Please try again.",
+    });
   }
-
-  // Remove any text within square brackets using regex
-  finalOutput = finalOutput.replace(/\[[^\]]*\]/g, "");
-  
-  // Clean up any double spaces that might have been created by removing the tags
-  finalOutput = finalOutput.replace(/\s+/g, " ").trim();
-
-  // Send the polished text back to the main thread
-  self.postMessage({
-    status: "polished",
-    polishedText: finalOutput,
-  });
 }
 
 async function load() {
@@ -253,7 +240,7 @@ async function load() {
 
   self.postMessage({
     status: "loading",
-    data: "Loading DeepSeek text polishing model...",
+    data: "Loading Llama 3.2 text polishing model...",
   });
 
   // Load the text polishing pipeline
@@ -289,6 +276,10 @@ self.addEventListener("message", async (e) => {
       
     case "polish":
       polishText(data);
+      break;
+      
+    case "interrupt":
+      stopping_criteria.interrupt();
       break;
   }
 });
