@@ -141,25 +141,30 @@ async function polishText({ text }) {
   const messages = [
     {
       role: "system",
-      content: `You are a voice note assistant. Your task is to polish the transcribed text and convert messy thoughts into clear text. 
+      content: `You are a voice note assistant. Your task is to convert the rambled messy thoughts into clear text. 
       Please remove any filler words, fix grammar, and improve flow, restructure the text to make it clear.
-      Note: You must respond with ONLY the polished text, with absolutely no additional commentary, explanations, or formatting.
-      Example: 
-      Input: "Hello, hello, hello. I'm going to introduce Voice Input Plus. It's an AI-powered voice-to-polish text tool. It's running completely locally using your own CPU or GPU or whatever. And yeah, you can just open your browser and run it."
-      Output: "Hello! Let me tell you about Voice Input Plus. It's a smart tool that turns your spoken words into polished text. The best part? It works right on your computer using your CPU or GPU. Just open your browser and start using it!"
-
-      Input: "The other day I have an idea which is to create a memory capsule app. What it does is that you can throw in any text, images, videos, and you can even have a conversation with an AI assistant. He will try to poke you with questions, trying to dig out your deep thoughts and some little details of your emotions, whatever that is hard to express if you are on your own. Then capture all these things into a capsule which can be transformed into any content if needed. For example, it can be converted into a blog post, a TikTok share, Instagram post, etc. In the future, it's going to be super powerful that you might talk to a past yourself and you might immerse yourself into an old memory using new technology in the future. But at first, you need to start documenting your memory. That's why memory capsule is so important right now."
-      Output: "I recently had an idea for a memory capsule app. This app lets you save text, images, and videos. You can even chat with an AI assistant. The AI will ask questions to help you explore your thoughts and feelings, especially those that are hard to express alone.
-
-All these memories get saved in a capsule. Later, you can turn this capsule into different types of content, like a blog post or a TikTok or Instagram post. In the future, the app could let you talk to your past self or relive old memories using new technology.
-
-But first, it's important to start capturing your memories now. That's why the memory capsule is so valuable today."
-      `
+      You must output ONLY the polished text, with absolutely no additional commentary, explanations, or formatting`
+    },
+    {
+      role: "user",
+      content: "Hello, hello, hello. I'm going to introduce Voice Input Plus. It's an AI-powered voice-to-polish text tool. It's running completely locally using your own CPU or GPU or whatever. And yeah, you can just open your browser and run it."
+    },
+    {
+      role: "assistant",
+      content: "Hello! Let me tell you about Voice Input Plus. It's a smart tool that turns your spoken words into polished text. The best part? It works right on your computer using your CPU or GPU. Just open your browser and start using it!"
+    },
+    {
+      role: "user",
+      content: "The other day I have an idea which is to create a memory capsule app. What it does is that you can throw in any text, images, videos, and you can even have a conversation with an AI assistant. He will try to poke you with questions, trying to dig out your deep thoughts and some little details of your emotions, whatever that is hard to express if you are on your own. Then capture all these things into a capsule which can be transformed into any content if needed. For example, it can be converted into a blog post, a TikTok share, Instagram post, etc. In the future, it's going to be super powerful that you might talk to a past yourself and you might immerse yourself into an old memory using new technology in the future. But at first, you need to start documenting your memory. That's why memory capsule is so important right now."
+    },
+    {
+      role: "assistant",
+      content: "I recently had an idea for a memory capsule app. This app lets you save text, images, and videos. You can even chat with an AI assistant. The AI will ask questions to help you explore your thoughts and feelings, especially those that are hard to express alone."
     },
     {
       role: "user",
       content: text
-    }
+    },
   ];
 
   // Apply the chat template to format the messages for the model
