@@ -36,18 +36,29 @@ Develop a simple, web-based AI tool that converts user voice input into polished
    - Display historical outputs in reverse chronological order.
    - Provide options to clear history or delete individual entries.
 
+6. **Smart Notes Management:**
+   - Automatically save polished text output as notes in a structured format.
+   - AI-powered automatic categorization of notes (e.g., "Work", "Personal", "Ideas", "To-do").
+   - Generate meaningful, concise titles for each note based on content analysis.
+   - Organized notes view with filtering by category and sorting options.
+   - Quick search functionality to find relevant notes by content or title.
+   - Allow manual editing of note titles and categories if needed.
+   - Visual tagging system with color-coded categories for easy identification.
+
 ### Technology Stack
 - **Frontend:** React with TypeScript, Headless UI, Tailwind CSS
 - **Models:** 
   - Speech recognition: Whisper (onnx-community/whisper-base)
   - Text polishing: DeepSeek-R1-Distill-Qwen-1.5B-ONNX
+  - Notes categorization and title generation: DeepSeek-R1-Distill-Qwen-1.5B-ONNX (same model with prompt engineering)
 - **Framework:** Transformer.js
 - **Hardware Acceleration:** WebGPU with CPU fallback
-- **Local Storage:** Browser's IndexedDB
+- **Local Storage:** Browser's IndexedDB for notes and categories
 
 ### Performance Goals
 - Voice input processing latency: under 3 seconds for short inputs (<30 seconds speech).
 - Text polishing latency: under 2 seconds for typical transcriptions.
+- Note categorization and title generation: under 1 second.
 - Browser compatibility: Modern browsers with graceful degradation for non-WebGPU browsers.
 
 ### Out of Scope
@@ -63,6 +74,8 @@ Develop a simple, web-based AI tool that converts user voice input into polished
 ### Acceptance Criteria
 - User can successfully input voice and receive clear, AI-polished text.
 - Both original transcription and AI-polished text are displayed to the user.
+- Notes are automatically saved, categorized, and given meaningful titles.
+- Users can easily browse, filter, and search through their notes collection.
 - Historical outputs persist locally and remain retrievable across page reloads.
 - Application remains performant and responsive on supported browsers.
 - Text polishing is performed exclusively by the AI model, with no fallback to rule-based processing.
