@@ -58,7 +58,7 @@ function App() {
         setProgressItems(prev => ({
           ...prev,
           [e.data.file]: { 
-            text: `Downloading ${e.data.file}`, 
+            text: `Loading ${e.data.file}`, 
             percentage: 0,
             total: e.data.total
           }
@@ -70,7 +70,7 @@ function App() {
         setProgressItems(prev => ({
           ...prev,
           [e.data.file]: { 
-            text: `Downloading ${e.data.file}`, 
+            text: `Loading ${e.data.file}`, 
             percentage: (e.data.loaded / e.data.total) * 100,
             total: e.data.total
           }
@@ -590,7 +590,15 @@ function App() {
           >
             Transformers.js
           </a>{" "}
-          <span className="mx-1 font-xs">•</span> Free <span className="mx-1 font-xs">•</span> Open source
+          <span className="mx-1 font-xs">•</span> Free <span className="mx-1 font-xs">•</span>{" "}
+          <a
+            href="https://github.com/xing5/voice-note-plus"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-warm-700 dark:text-warm-300 hover:underline"
+          >
+            Open source
+          </a>
         </p>
       </footer>
       

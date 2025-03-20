@@ -1,0 +1,14 @@
+{
+  "name": "VoiceNote+",
+  "short_name": "VoiceNote+",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "theme_color": "#f8f3ee",
+  "background_color": "#f8f3ee",
+  "display": "standalone"
+} 
