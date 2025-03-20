@@ -1,6 +1,43 @@
+/* Import elegant fonts */
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-warm-50 dark:bg-slate-900 font-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer components {
+  .elegant-card {
+    @apply bg-white dark:bg-slate-800 border border-warm-200 dark:border-slate-700 shadow-sm rounded-lg overflow-hidden;
+  }
+  
+  .elegant-button {
+    @apply px-6 py-3 bg-warm-600 hover:bg-warm-700 text-white font-serif tracking-wide rounded-lg transition-all duration-300 shadow-sm hover:shadow-md;
+  }
+  
+  .elegant-input {
+    @apply border-warm-200 dark:border-slate-700 rounded-lg font-serif;
+  }
+  
+  .pulse-animation {
+    @apply animate-pulse;
+  }
+  
+  .visualizer-bar {
+    @apply rounded-full bg-gradient-to-t from-warm-600 to-warm-400 dark:from-warm-700 dark:to-warm-500;
+  }
+}
 
 @layer utilities {
   .scrollbar-thin::-webkit-scrollbar {
@@ -8,15 +45,15 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
-    @apply rounded-full bg-gray-100 dark:bg-gray-700;
+    @apply rounded-full bg-warm-100 dark:bg-slate-700;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    @apply rounded-full bg-gray-300 dark:bg-gray-600;
+    @apply rounded-full bg-warm-300 dark:bg-slate-600;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-500;
+    @apply bg-warm-500;
   }
 
   .animation-delay-200 {
@@ -28,5 +65,13 @@
 
   .overflow-wrap-anywhere {
     overflow-wrap: anywhere;
+  }
+  
+  .text-shadow-sm {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+  
+  .elegant-transition {
+    @apply transition-all duration-300 ease-in-out;
   }
 }

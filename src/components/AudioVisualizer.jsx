@@ -1,57 +1,89 @@
-import { useRef, useCallback, useEffect } from "react";
+import { useRef, useCallback, useEffect, useState } from "react";
 
 export function AudioVisualizer({ stream, ...props }) {
   const canvasRef = useRef(null);
-
+  const [isActive, setIsActive] = useState(false);
+  
   const visualize = useCallback((stream) => {
+    if (!stream) return;
+    
+    setIsActive(true);
     const audioContext = new (window.AudioContext ||
       window.webkitAudioContext)();
     const source = audioContext.createMediaStreamSource(stream);
     const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 2048;
+    analyser.fftSize = 256;
     source.connect(analyser);
 
     const canvas = canvasRef.current;
+    if (!canvas) return;
+    
     const canvasCtx = canvas.getContext("2d");
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
+    
+    const barWidth = (canvas.width / bufferLength) * 2.5;
+    let barHeight;
+    let x = 0;
 
     const drawVisual = () => {
+      if (!isActive) return;
+      
       requestAnimationFrame(drawVisual);
-      analyser.getByteTimeDomainData(dataArray);
+      analyser.getByteFrequencyData(dataArray);
 
-      canvasCtx.fillStyle = "rgb(255, 255, 255)";
-      canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+      // Use elegant warm color palette
+      const gradient = canvasCtx.createLinearGradient(0, 0, 0, canvas.height);
+      gradient.addColorStop(0, "#A67D4B"); // warm-600
+      gradient.addColorStop(1, "#DBBFA0"); // warm-300
 
-      canvasCtx.lineWidth = 2;
-      canvasCtx.strokeStyle = "rgb(0, 0, 0)";
-      canvasCtx.beginPath();
-
-      const sliceWidth = (canvas.width * 1.0) / bufferLength;
-
-      let x = 0;
-      for (let i = 0; i < bufferLength; ++i) {
-        const v = dataArray[i] / 128.0;
-        const y = (v * canvas.height) / 2;
-
-        if (i === 0) {
-          canvasCtx.moveTo(x, y);
-        } else {
-          canvasCtx.lineTo(x, y);
+      canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = dataArray[i] * 0.5;
+        
+        // Skip drawing very low values for a cleaner look
+        if (barHeight < 5) {
+          x += barWidth + 2;
+          continue;
         }
-
-        x += sliceWidth;
+        
+        // Rounded bar style
+        canvasCtx.fillStyle = gradient;
+        canvasCtx.beginPath();
+        canvasCtx.roundRect(x, canvas.height - barHeight, barWidth, barHeight, 4);
+        canvasCtx.fill();
+        
+        x += barWidth + 2;
       }
-
-      canvasCtx.lineTo(canvas.width, canvas.height / 2);
-      canvasCtx.stroke();
     };
 
     drawVisual();
-  }, []);
+    
+    return () => {
+      setIsActive(false);
+      audioContext.close();
+    };
+  }, [isActive]);
 
   useEffect(() => {
-    stream && visualize(stream);
+    const cleanup = stream ? visualize(stream) : undefined;
+    return () => {
+      if (cleanup) cleanup();
+      setIsActive(false);
+    };
   }, [visualize, stream]);
-  return <canvas {...props} width={720} height={240} ref={canvasRef}></canvas>;
+  
+  return (
+    <div className="elegant-card p-1 w-full">
+      <canvas 
+        {...props} 
+        width={720} 
+        height={100} 
+        ref={canvasRef} 
+        className="w-full h-full"
+      />
+    </div>
+  );
 }

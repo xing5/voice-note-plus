@@ -9,9 +9,9 @@ function formatBytes(size) {
 export default function Progress({ text, percentage, total }) {
   percentage ??= 0;
   return (
-    <div className="w-full bg-gray-100 dark:bg-gray-700 text-left rounded-lg overflow-hidden mb-0.5">
+    <div className="w-full bg-warm-100 dark:bg-slate-700 text-left rounded-lg overflow-hidden mb-2">
       <div
-        className="bg-blue-400 whitespace-nowrap px-1 text-sm"
+        className="bg-gradient-to-r from-warm-500 to-warm-600 whitespace-nowrap px-2 py-1 text-sm text-white font-serif"
         style={{ width: `${percentage}%` }}
       >
         {text} ({percentage.toFixed(2)}%

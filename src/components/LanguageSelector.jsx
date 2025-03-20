@@ -111,18 +111,20 @@ const LANGUAGES = {
   jw: "javanese",
   su: "sundanese",
 };
-export function LanguageSelector({ language, setLanguage }) {
+
+export function LanguageSelector({ language, onChange, disabled }) {
   const handleLanguageChange = (event) => {
-    setLanguage(event.target.value);
+    onChange(event.target.value);
   };
 
   const names = Object.values(LANGUAGES).map(titleCase);
 
   return (
     <select
-      className="border rounded-lg p-2 max-w-[100px]"
+      className="elegant-input font-serif px-3 py-2 border rounded-lg bg-warm-50 dark:bg-slate-800 text-warm-800 dark:text-warm-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-warm-500 focus:border-warm-500"
       value={language}
       onChange={handleLanguageChange}
+      disabled={disabled}
     >
       {Object.keys(LANGUAGES).map((key, i) => (
         <option key={key} value={key}>

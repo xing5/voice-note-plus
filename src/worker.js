@@ -143,7 +143,8 @@ async function polishText({ text }) {
       role: "system",
       content: `You are a voice note assistant. Your task is to convert the rambled messy thoughts into clear text. 
       Please remove any filler words, fix grammar, and improve flow, restructure the text to make it clear.
-      You must output ONLY the polished text, with absolutely no additional commentary, explanations, or formatting`
+      This is not a conversation. You must output ONLY the polished text, with absolutely no additional commentary, explanations, or formatting.
+      Please follow the examples below to understand how to polish the text.`
     },
     {
       role: "user",
