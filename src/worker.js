@@ -76,58 +76,67 @@ async function generate({ audio, language }) {
   if (processing) return;
   processing = true;
 
-  // Tell the main thread we are starting
-  self.postMessage({ status: "start" });
+  try {
+    // Tell the main thread we are starting
+    self.postMessage({ status: "start" });
 
-  // Retrieve the text-generation pipeline.
-  const [tokenizer, processor, model] =
-    await AutomaticSpeechRecognitionPipeline.getInstance();
+    // Retrieve the text-generation pipeline.
+    const [tokenizer, processor, model] =
+      await AutomaticSpeechRecognitionPipeline.getInstance();
 
-  let startTime;
-  let numTokens = 0;
-  let tps;
-  const token_callback_function = () => {
-    startTime ??= performance.now();
+    let startTime;
+    let numTokens = 0;
+    let tps;
+    const token_callback_function = () => {
+      startTime ??= performance.now();
 
-    if (numTokens++ > 0) {
-      tps = (numTokens / (performance.now() - startTime)) * 1000;
-    }
-  };
- const callback_function = (output) => {
-    self.postMessage({
-      status: "update",
-      output,
-      tps,
-      numTokens,
+      if (numTokens++ > 0) {
+        tps = (numTokens / (performance.now() - startTime)) * 1000;
+      }
+    };
+    const callback_function = (output) => {
+      self.postMessage({
+        status: "update",
+        output,
+        tps,
+        numTokens,
+      });
+    };
+
+    const streamer = new TextStreamer(tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function,
+      token_callback_function,
     });
-  };
 
-  const streamer = new TextStreamer(tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function,
-    token_callback_function,
-  });
+    const inputs = await processor(audio);
 
-  const inputs = await processor(audio);
+    const outputs = await model.generate({
+      ...inputs,
+      max_new_tokens: MAX_NEW_TOKENS,
+      language,
+      streamer,
+    });
 
-  const outputs = await model.generate({
-    ...inputs,
-    max_new_tokens: MAX_NEW_TOKENS,
-    language,
-    streamer,
-  });
+    const decoded = tokenizer.batch_decode(outputs, {
+      skip_special_tokens: true,
+    })[0];
 
-  const decoded = tokenizer.batch_decode(outputs, {
-    skip_special_tokens: true,
-  })[0];
-
-  // Send the output back to the main thread
-  self.postMessage({
-    status: "complete",
-    output: decoded.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, ''),
-  });
-  processing = false;
+    // Send the output back to the main thread
+    self.postMessage({
+      status: "complete",
+      output: decoded.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, ''),
+    });
+  } catch (error) {
+    console.error("Error during speech recognition:", error);
+    self.postMessage({
+      status: "error",
+      error: error.message || "Error during speech recognition"
+    });
+  } finally {
+    processing = false;
+  }
 }
 
 async function polishText({ text }) {
@@ -215,10 +224,13 @@ async function polishText({ text }) {
       return_dict_in_generate: true,
     });
 
-    self.postMessage({
-      status: "polished",
-      polishedText: finalOutput,
-    });
+    // Add a small delay before sending the final result to allow for a smooth transition
+    setTimeout(() => {
+      self.postMessage({
+        status: "polished",
+        polishedText: finalOutput,
+      });
+    }, 300);
   } catch (error) {
     console.error("Error during text polishing:", error);
     
@@ -231,40 +243,61 @@ async function polishText({ text }) {
 }
 
 async function load() {
-  self.postMessage({
-    status: "loading",
-    data: "Loading transcription model...",
-  });
+  // If models are already loaded, don't try to load them again
+  if (AutomaticSpeechRecognitionPipeline.model !== null && 
+      TextPolishingPipeline.model !== null) {
+    self.postMessage({ status: "ready" });
+    return;
+  }
 
-  // Load the whisper pipeline
-  const [tokenizer, processor, model] =
-    await AutomaticSpeechRecognitionPipeline.getInstance((x) => {
-      // We also add a progress callback to the pipeline so that we can
-      // track model loading.
+  try {
+    self.postMessage({
+      status: "loading",
+      data: "Loading transcription model...",
+    });
+
+    // Load the whisper pipeline
+    const [tokenizer, processor, model] =
+      await AutomaticSpeechRecognitionPipeline.getInstance((x) => {
+        // We also add a progress callback to the pipeline so that we can
+        // track model loading.
+        self.postMessage(x);
+      });
+
+    self.postMessage({
+      status: "loading",
+      data: "Loading Llama 3.2 text polishing model...",
+    });
+
+    // Load the text polishing pipeline
+    await TextPolishingPipeline.getInstance((x) => {
       self.postMessage(x);
     });
 
-  self.postMessage({
-    status: "loading",
-    data: "Loading Llama 3.2 text polishing model...",
-  });
+    self.postMessage({
+      status: "loading",
+      data: "Compiling shaders and warming up models...",
+    });
 
-  // Load the text polishing pipeline
-  await TextPolishingPipeline.getInstance((x) => {
-    self.postMessage(x);
-  });
-
-  self.postMessage({
-    status: "loading",
-    data: "Compiling shaders and warming up models...",
-  });
-
-  // Run model with dummy input to compile shaders
-  await model.generate({
-    input_features: full([1, 80, 3000], 0.0),
-    max_new_tokens: 1,
-  });
-  self.postMessage({ status: "ready" });
+    try {
+      // Run model with dummy input to compile shaders
+      await model.generate({
+        input_features: full([1, 80, 3000], 0.0),
+        max_new_tokens: 1,
+      });
+      self.postMessage({ status: "ready" });
+    } catch (error) {
+      console.error("Error during model warmup:", error);
+      // If warmup fails, we still consider the model ready
+      self.postMessage({ status: "ready" });
+    }
+  } catch (error) {
+    console.error("Error loading models:", error);
+    self.postMessage({ 
+      status: "error", 
+      error: error.message || "Failed to load models" 
+    });
+  }
 }
 
 // Listen for messages from the main thread

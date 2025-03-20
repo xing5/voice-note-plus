@@ -1,9 +1,13 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useReducer, useCallback } from "react";
 
 import { AudioVisualizer } from "./components/AudioVisualizer";
 import Progress from "./components/Progress";
 import { LanguageSelector } from "./components/LanguageSelector";
 import { RecordingTimer } from "./components/RecordingTimer";
+import { speechReducer, initialSpeechState } from "./speechReducer";
+import { useSpeechRecorder } from "./useSpeechRecorder";
+import { useTranscriptionWorker } from "./useTranscriptionWorker";
+import SettingsModal from "./components/SettingsModal";
 
 const IS_WEBGPU_AVAILABLE = !!navigator.gpu;
 
@@ -11,363 +15,250 @@ const WHISPER_SAMPLING_RATE = 16_000;
 const MAX_AUDIO_LENGTH = 30; // seconds
 const MAX_SAMPLES = WHISPER_SAMPLING_RATE * MAX_AUDIO_LENGTH;
 
+// Define a style block for animation keyframes
+const fadeInStyle = `
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .text-fade-in {
+    animation: fadeIn 0.8s ease-out forwards;
+  }
+`;
+
 function App() {
-  // Create a reference to the worker object.
-  const worker = useRef(null);
-
-  const recorderRef = useRef(null);
-
-  // Model loading and progress
-  const [status, setStatus] = useState(null);
-  const [loadingMessage, setLoadingMessage] = useState("");
-  const [progressItems, setProgressItems] = useState([]);
-
-  // Inputs and outputs
-  const [text, setText] = useState("");
-  const [tps, setTps] = useState(null);
-  const [language, setLanguage] = useState("en");
-
-  // Processing
-  const [recording, setRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [chunks, setChunks] = useState([]);
-  const [stream, setStream] = useState(null);
-  const [transcribedMarker, setTranscribedMarker] = useState(0);
-  const audioContextRef = useRef(null);
-
-  // Add a new state for tracking if we have an active recorder
-  const [hasRecorder, setHasRecorder] = useState(false);
-
-  // Add a new state for polished text
-  const [polishedText, setPolishedText] = useState("");
-  const [isPolishing, setIsPolishing] = useState(false);
+  // Speech state management with reducer
+  const [speechState, dispatch] = useReducer(speechReducer, initialSpeechState);
   
-  // Processing progress for the respect meter
-  const [processingProgress, setProcessingProgress] = useState(0);
-
-  // Add state for showing original or polished text
-  const [showOriginal, setShowOriginal] = useState(false);
-
-  // We use the `useEffect` hook to setup the worker as soon as the `App` component is mounted.
-  useEffect(() => {
-    if (!worker.current) {
-      // Create the worker if it does not yet exist.
-      worker.current = new Worker(new URL("./worker.js", import.meta.url), {
-        type: "module",
-      });
-    }
-
-    // Create a callback function for messages from the worker thread.
-    const onMessageReceived = (e) => {
-      switch (e.data.status) {
-        case "loading":
-          // Model file start load: add a new progress item to the list.
-          setStatus("loading");
-          setLoadingMessage(e.data.data);
-          break;
-
-        case "initiate":
-          setProgressItems((prev) => [...prev, e.data]);
-          break;
-
-        case "progress":
-          // Model file progress: update one of the progress items.
-          setProgressItems((prev) =>
-            prev.map((item) => {
-              if (item.file === e.data.file) {
-                return { ...item, ...e.data };
-              }
-              return item;
-            })
-          );
-          break;
-
-        case "done":
-          // Model file loaded: remove the progress item from the list.
-          setProgressItems((prev) => prev.filter((item) => item.file !== e.data.file));
-          break;
-
-        case "ready":
-          // Pipeline ready: the worker is ready to accept messages.
-          setStatus("ready");
-          recorderRef.current?.start();
-          break;
-
-        case "start":
-          {
-            // Start generation
-            setIsProcessing(true);
-            setProcessingProgress(0);
-
-            // Request new data from the recorder
-            recorderRef.current?.requestData();
+  // Handle language selection
+  const [language, setLanguage] = useState("en");
+  
+  // Settings modal state
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Create a ref to store the worker interface methods
+  const workerInterfaceRef = useRef(null);
+  
+  // Progress tracking for model loading
+  const [progressItems, setProgressItems] = useState({});
+  
+  // Handle worker messages
+  const handleWorkerMessage = useCallback((e) => {
+    // Log each message for debugging
+    console.log("Worker message:", e.data);
+    
+    switch (e.data.status) {
+      case "loading":
+        // Model file start load
+        dispatch({ type: "SET_STATUS", status: "loading", message: e.data.data });
+        break;
+        
+      case "initiate":
+        // Model file download initiated
+        setProgressItems(prev => ({
+          ...prev,
+          [e.data.file]: { 
+            text: `Downloading ${e.data.file}`, 
+            percentage: 0,
+            total: e.data.total
           }
-          break;
-
-        case "update":
-          {
-            // Generation update: update the output text.
-            const { tps, progress } = e.data;
-            setTps(tps);
-            if (progress) {
-              setProcessingProgress(progress);
-            }
+        }));
+        break;
+        
+      case "progress":
+        // Model file download progress
+        setProgressItems(prev => ({
+          ...prev,
+          [e.data.file]: { 
+            text: `Downloading ${e.data.file}`, 
+            percentage: (e.data.loaded / e.data.total) * 100,
+            total: e.data.total
           }
-          break;
-
-        case "complete":
-          // Generation complete: re-enable the "Generate" button
-          setIsProcessing(false);
-          setProcessingProgress(1); // Set to 100%
-          // Append the new transcription to the accumulated text
-          setText(prev => {
-            // Add a space between transcriptions if needed
-            const separator = prev && e.data.output ? " " : "";
-            return prev + separator + e.data.output;
-          });
-          break;
-
-        case "polishing":
-          // Text polishing has started
-          setIsPolishing(true);
-          setProcessingProgress(0);
-          break;
-
-        case "polishing_update":
-          // Streaming update from the polishing process
-          setIsPolishing(true);
-          if (e.data.progress) {
-            setProcessingProgress(e.data.progress);
+        }));
+        break;
+        
+      case "done":
+        // Model file download complete
+        setProgressItems(prev => ({
+          ...prev,
+          [e.data.file]: { 
+            text: `Downloaded ${e.data.file}`, 
+            percentage: 100,
+            total: e.data.total
           }
-          setPolishedText(prev => {
-            const separator = prev && e.data.output ? " " : "";
-            return prev + separator + e.data.polishedText;
-          });
-          break;
-
-        case "polished":
-          // Text polishing is complete
-          setIsPolishing(false);
-          setProcessingProgress(1); // Set to 100%
-          setPolishedText(e.data.polishedText);
-          break;
-      }
-    };
-
-    // Attach the callback function as an event listener.
-    worker.current.addEventListener("message", onMessageReceived);
-
-    // Define a cleanup function for when the component is unmounted.
-    return () => {
-      worker.current.removeEventListener("message", onMessageReceived);
-    };
-  }, []);
-
-  // Modify the startRecording function to reset transcriptions for a new session
-  const startRecording = async () => {
-    try {
-      if (!hasRecorder) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        setStream(stream);
-
-        recorderRef.current = new MediaRecorder(stream);
-        audioContextRef.current = new AudioContext({
-          sampleRate: WHISPER_SAMPLING_RATE,
-        });
-
-        recorderRef.current.onstart = () => {
-          setRecording(true);
-          setChunks([]);
-          // Clear transcriptions for new recording session
-          setText("");
-          setPolishedText("");
-        };
-        recorderRef.current.ondataavailable = (e) => {
-          if (e.data.size > 0) {
-            setChunks((prev) => [...prev, e.data]);
-          } else {
-            // Empty chunk received, so we request new data after a short timeout
-            setTimeout(() => {
-              recorderRef.current.requestData();
-            }, 1000);
-          }
-        };
-
-        recorderRef.current.onstop = () => {
-          setRecording(false);
-        };
-
-        setHasRecorder(true);
-      }
-
-      recorderRef.current.start(10);
-    } catch (err) {
-      console.error("Error starting recording:", err);
-    }
-  };
-
-  // Modify the stopRecording function to release resources and trigger text polishing
-  const stopRecording = () => {
-    if (recorderRef.current && recording) {
-      recorderRef.current.stop();
-
-      // Release resources
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        setStream(null);
-      }
-
-      recorderRef.current = null;
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
-
-      setTranscribedMarker(0);
-      setHasRecorder(false);
+        }));
+        break;
       
-      // Always show a result, even if empty
-      setIsPolishing(true);
+      case "ready":
+        // Pipeline ready
+        dispatch({ type: "SET_STATUS", status: "ready" });
+        setProgressItems({});  // Clear progress items
+        break;
       
-      if (text.trim()) {
-        // Send the full transcription to the worker for polishing
-        worker.current.postMessage({
-          type: "polish",
-          data: { text }
-        });
-      } else {
-        // Handle empty transcription
-        setTimeout(() => {
-          setIsPolishing(false);
-          setPolishedText("I didn't hear anything. Try speaking a bit louder or check if your microphone is working.");
-        }, 1000);
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (!recorderRef.current) return;
-    if (!recording) return;
-    if (isProcessing) return;
-    if (status !== "ready") return;
-
-    if (chunks.length > 0) {
-      // Generate from data
-      const blob = new Blob(chunks, { type: recorderRef.current.mimeType });
-
-      const fileReader = new FileReader();
-
-      fileReader.onloadend = async () => {
-        const arrayBuffer = fileReader.result;
-        const decoded = await audioContextRef.current.decodeAudioData(arrayBuffer);
-        let audio = decoded.getChannelData(0);
-        
-        // Get the new audio segment since last transcription
-        const newAudioSegment = audio.slice(transcribedMarker);
-        
-        // Check if the segment contains any non-silent audio
-        const hasNonSilentAudio = containsNonSilentAudio(newAudioSegment);
-        
-        // Only proceed if there's actual audio content or we've reached max length
-        if (hasNonSilentAudio || newAudioSegment.length > MAX_SAMPLES) {
-          // Check if we should transcribe based on:
-          // 1. Max length reached, or
-          // 2. Silence detected at the end (indicating potential end of sentence)
-          const shouldTranscribe = 
-            newAudioSegment.length > MAX_SAMPLES || 
-            hasSilenceAtEnd(newAudioSegment);
-          
-          if (shouldTranscribe) {
-            console.log("sending audio to worker. marker:length is ", transcribedMarker, audio.length);
-            // Send the entire segment since last transcription
-            worker.current.postMessage({
-              type: "generate",
-              data: { audio: newAudioSegment, language },
+      case "start":
+        // Start generation
+        dispatch({ type: "TRANSCRIPTION_PROGRESS", progress: 0 });
+        break;
+      
+      case "update":
+        // Progress update
+        if (e.data.progress) {
+          dispatch({ type: "TRANSCRIPTION_PROGRESS", progress: e.data.progress });
+        }
+        break;
+      
+      case "complete":
+        // Transcription complete
+        if (e.data.output && e.data.output.trim()) {
+          dispatch({ type: "TRANSCRIPTION_COMPLETE", text: e.data.output });
+          console.log("Transcription complete, sending for polishing:", e.data.output);
+          // Start polishing using the ref
+          try {
+            workerInterfaceRef.current?.polishText(e.data.output);
+          } catch (error) {
+            console.error("Error starting text polishing:", error);
+            dispatch({ 
+              type: "POLISHING_COMPLETE", 
+              polishedText: e.data.output // Use the original text if polishing fails
             });
-            setTranscribedMarker(audio.length);
           }
         } else {
-          // If it's all silence, just update the marker without transcribing
-          setTranscribedMarker(audio.length);
+          dispatch({ type: "NO_SPEECH_DETECTED" });
         }
-      };
-      fileReader.readAsArrayBuffer(blob);
-    } else {
-      recorderRef.current?.requestData();
-    }
-  }, [status, recording, isProcessing, chunks, language]);
-
-  // Helper function to check if audio contains any non-silent content
-  const containsNonSilentAudio = (audioData, silenceThreshold = 0.01) => {
-    for (let i = 0; i < audioData.length; i++) {
-      if (Math.abs(audioData[i]) > silenceThreshold) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  // Function to detect if there's silence at the end of the audio
-  const hasSilenceAtEnd = (audioData, silenceThreshold = 0.01, minSilenceDuration = 500) => {
-    const minSilenceSamples = minSilenceDuration * (WHISPER_SAMPLING_RATE / 1000); // Convert ms to samples
-    
-    // Only check the last portion of the audio
-    const endSamples = Math.min(minSilenceSamples * 2, audioData.length);
-    const endAudio = audioData.slice(audioData.length - endSamples);
-    
-    let consecutiveSilentSamples = 0;
-    
-    for (let i = 0; i < endAudio.length; i++) {
-      if (Math.abs(endAudio[i]) <= silenceThreshold) {
-        consecutiveSilentSamples++;
+        break;
+      
+      case "polishing":
+        // Polishing started
+        dispatch({ type: "POLISHING_PROGRESS", progress: 0 });
+        break;
+      
+      case "polishing_update":
+        // Polishing progress
+        if (e.data.progress) {
+          dispatch({ type: "POLISHING_PROGRESS", progress: e.data.progress });
+        }
+        break;
+      
+      case "polished":
+        // Polishing complete
+        dispatch({ 
+          type: "POLISHING_COMPLETE", 
+          polishedText: e.data.polishedText || e.data.output || "I didn't hear anything. Try speaking a bit louder or check if your microphone is working." 
+        });
+        break;
+      
+      case "error":
+        // Handle explicit error messages from worker
+        console.error("Worker error:", e.data.error);
+        // Get current state values to determine what type of error occurred
+        const isPolishing = speechState.isPolishing;
+        const isProcessing = speechState.isProcessing;
+        const currentText = speechState.text;
         
-        if (consecutiveSilentSamples >= minSilenceSamples) {
-          return true;
+        if (isPolishing) {
+          dispatch({ 
+            type: "POLISHING_COMPLETE", 
+            polishedText: currentText || "Error during text processing. Please try again."
+          });
+        } else if (isProcessing) {
+          dispatch({ type: "NO_SPEECH_DETECTED" });
+        } else {
+          // General error during loading or other operations
+          dispatch({ type: "SET_STATUS", status: "ready" });
         }
-      } else {
-        consecutiveSilentSamples = 0;
-      }
+        break;
+        
+      default:
+        console.log("Unknown worker message:", e.data);
+        break;
+    }
+  }, [speechState]);
+  
+  // Set up worker interface
+  const workerInterface = useTranscriptionWorker({ onMessage: handleWorkerMessage });
+  
+  // Store the worker interface in the ref
+  useEffect(() => {
+    workerInterfaceRef.current = workerInterface;
+  }, [workerInterface]);
+  
+  // Handle audio ready from recorder
+  const handleAudioReady = useCallback((audio, error) => {
+    if (error) {
+      console.error("Audio recording error:", error);
+      dispatch({ type: "NO_SPEECH_DETECTED" });
+      return;
     }
     
-    return false;
-  };
-
-  // Add a function to copy text to clipboard
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text).then(
-      () => {
-        // You could add a toast notification here
-        console.log("Text copied to clipboard");
-      },
-      (err) => {
-        console.error("Could not copy text: ", err);
-      }
-    );
-  };
-
-  // Function to start a new recording session
-  const startNewRecording = () => {
-    setText("");
-    setPolishedText("");
+    if (!audio) {
+      dispatch({ type: "NO_SPEECH_DETECTED" });
+      return;
+    }
+    
+    console.log("Transcribing audio, length:", audio.length);
+    workerInterfaceRef.current?.transcribeAudio(audio, language);
+  }, [language]);
+  
+  // Set up speech recorder
+  const { startRecording, stopRecording, isRecording, stream } = useSpeechRecorder({
+    onAudioReady: handleAudioReady,
+    sampleRate: WHISPER_SAMPLING_RATE
+  });
+  
+  // Start a new recording session
+  const handleStartRecording = () => {
+    dispatch({ type: "START_RECORDING" });
     startRecording();
   };
-
+  
+  // Stop recording and begin processing
+  const handleStopRecording = () => {
+    dispatch({ type: "STOP_RECORDING" });
+    stopRecording();
+  };
+  
+  // Toggle between original and polished text
+  const toggleTextView = () => {
+    dispatch({ type: "TOGGLE_VIEW" });
+  };
+  
+  // Copy text to clipboard
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text)
+      .then(() => console.log("Text copied to clipboard"))
+      .catch(err => console.error("Could not copy text:", err));
+  };
+  
+  // Initialize the app
+  useEffect(() => {
+    // We don't automatically load models anymore, let the user click the button
+    // workerInterfaceRef.current?.loadModels();
+  }, []);
+  
+  // Render UI based on current state
   return IS_WEBGPU_AVAILABLE ? (
     <div className="min-h-screen bg-warm-50 dark:bg-slate-900 dark:text-warm-100 p-4">
+      {/* Add style tag for animation keyframes */}
+      <style dangerouslySetInnerHTML={{ __html: fadeInStyle }} />
+      
       <header className="py-8">
         <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-heading font-bold text-center text-warm-800 dark:text-warm-200">
-            Voice<span className="text-warm-600">Input</span><span className="text-warm-700">+</span>
-          </h1>
-          <p className="text-center text-warm-600 dark:text-warm-300 mt-2 font-serif italic">
-            Speak naturally, get perfectly organized text
-          </p>
+          <div className="flex justify-center items-center">
+            <div className="text-center">
+              <h1 className="text-4xl font-heading font-bold text-center text-warm-800 dark:text-warm-200">
+                Voice<span className="text-warm-600">Input</span><span className="text-warm-700">+</span>
+              </h1>
+              <p className="text-center text-warm-600 dark:text-warm-300 mt-2 font-serif italic">
+                Speak naturally, get perfectly organized text
+              </p>
+            </div>
+          </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Initial Load Button */}
-        {status === null && (
+        {speechState.status === null && (
           <div className="mx-auto elegant-card p-8 mb-8 text-center">
             <p className="text-warm-600 dark:text-warm-300 mb-8 font-serif text-lg">
               VoiceInput+ converts your voice into polished text using AI models that run directly in your browser.
@@ -375,45 +266,61 @@ function App() {
             </p>
             <button
               className="elegant-button"
-              onClick={() => {
-                worker.current.postMessage({ type: "load" });
-                setStatus("loading");
-              }}
-              disabled={status !== null}
+              onClick={() => workerInterfaceRef.current?.loadModels()}
+              disabled={speechState.status !== null}
             >
               Load models
             </button>
           </div>
         )}
-        
+
         {/* Loading state */}
-        {status === "loading" && (
+        {speechState.status === "loading" && (
           <div className="mx-auto elegant-card p-8 mb-8">
             <h2 className="text-2xl font-heading mb-4 text-warm-800 dark:text-warm-200">Loading models...</h2>
-            <p className="text-warm-600 dark:text-warm-300 mb-6 font-serif">{loadingMessage}</p>
-            {progressItems.map((item) => (
-              <Progress
-                key={item.file}
-                text={item.file}
-                percentage={item.progress}
-                total={item.total}
-              />
-            ))}
+            <p className="text-warm-600 dark:text-warm-300 mb-6 font-serif">{speechState.loadingMessage}</p>
+            {/* Display progress items */}
+            {Object.keys(progressItems).length > 0 && (
+              <div className="space-y-2">
+                {Object.entries(progressItems).map(([key, item]) => (
+                  <Progress 
+                    key={key}
+                    text={item.text}
+                    percentage={item.percentage}
+                    total={item.total}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Main Interface */}
-        {status === "ready" && (
-          <div className="mx-auto elegant-card p-8 mb-8">
-            {/* Recording Interface */}
+        {/* Recording Interface */}
+        {speechState.status === "ready" && (
+          <div className="mx-auto elegant-card p-8 mb-8 relative">
+            {/* Settings Button */}
+            <div className="absolute top-4 right-4">
+              <button 
+                onClick={() => setShowSettings(true)}
+                className="text-warm-600 hover:text-warm-800 dark:text-warm-400 dark:hover:text-warm-200 transition-colors"
+                aria-label="Settings"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+            </div>
+            
             <div className="flex flex-col items-center justify-center gap-6 mb-6">
-              {!recording && !isPolishing && (
+              {/* Start speaking button */}
+              {!speechState.isRecording && !speechState.isProcessing && !speechState.isPolishing && (
                 <>
                   <p className="text-warm-600 dark:text-warm-400 font-serif text-center mb-2">
                     Click the microphone to start speaking
                   </p>
                   <button
-                    onClick={startRecording}
+                    onClick={handleStartRecording}
                     className="relative w-28 h-28 bg-warm-600 hover:bg-warm-700 rounded-full text-white shadow-md hover:shadow-lg transition-all duration-300 flex items-center justify-center border-4 border-warm-200 dark:border-warm-800"
                     aria-label="Start speaking"
                   >
@@ -434,15 +341,16 @@ function App() {
                 </>
               )}
 
-              {recording && (
+              {/* Stop speaking button */}
+              {speechState.isRecording && (
                 <>
                   <div className="relative mt-12">
                     <button
-                      className="w-28 h-28 bg-warm-700 rounded-full text-white shadow-md flex items-center justify-center border-4 border-warm-200 dark:border-warm-800"
+                      className="w-28 h-28 bg-warm-700 rounded-full text-white shadow-md flex items-center justify-center border-4 border-warm-200 dark:border-warm-800 transition-all duration-300"
                       aria-label="Stop speaking"
-                      onClick={stopRecording}
+                      onClick={handleStopRecording}
                     >
-                      <span className="absolute inset-0 rounded-full shadow-lg shadow-warm-700/50 animate-pulse"></span>
+                      <span className="shadow-lg shadow-warm-700/50 animate-pulse absolute inset-0 rounded-full"></span>
                       <span className="sr-only">Stop speaking</span>
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -454,19 +362,18 @@ function App() {
                       </svg>
                     </button>
                     <div className="absolute -top-12 left-1/2 transform -translate-x-1/2 min-w-[80px] text-center">
-                      <RecordingTimer isRecording={recording} />
+                      <RecordingTimer isRecording={speechState.isRecording} />
                     </div>
                   </div>
                   
                   <div className="mt-2 mb-4 w-full max-w-lg">
-                    <AudioVisualizer
-                      stream={stream}
-                    />
+                    <AudioVisualizer stream={stream} />
                   </div>
                 </>
               )}
 
-              {isPolishing && (
+              {/* Processing indicator */}
+              {(speechState.isProcessing || speechState.isPolishing) && (
                 <div className="flex flex-col items-center">
                   <div className="w-28 h-28 flex items-center justify-center">
                     <svg
@@ -486,57 +393,41 @@ function App() {
                     </svg>
                   </div>
                   <p className="text-warm-600 dark:text-warm-400 mt-4 font-serif text-center">
-                    {text.trim() ? "Polishing your text..." : "Processing your speech..."}
+                    {speechState.isProcessing ? "Processing your speech..." : "Polishing your text..."}
                   </p>
-                </div>
-              )}
-              
-              {IS_WEBGPU_AVAILABLE && status === "ready" && (
-                <div className="text-sm text-warm-500 dark:text-warm-400 flex items-center mt-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-warm-500 mr-2"></span>
-                  WebGPU acceleration enabled
                 </div>
               )}
             </div>
 
-            {/* Language Selector - Only show when not recording */}
-            {!recording && (
-              <div className="mb-6 flex justify-end">
-                <div className="flex items-center gap-2">
-                  <span className="text-warm-600 dark:text-warm-400 font-serif">Language:</span>
-                  <LanguageSelector
-                    language={language}
-                    onChange={setLanguage}
-                    disabled={recording || isProcessing}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Text Output Section - Only show when we have text or it's being polished */}
-            {(polishedText || isPolishing || (text && showOriginal)) && (
+            {/* Text Output Section */}
+            {(speechState.polishedText || (speechState.text && speechState.showOriginal)) && 
+             !speechState.isPolishing && (
               <div className="mt-6">
-                <div className="elegant-card p-6 border-2 border-warm-200 dark:border-slate-700">
+                <div 
+                  className={`elegant-card p-6 border-2 border-warm-200 dark:border-slate-700 transition-all duration-700 ease-in-out ${
+                    speechState.fadeIn ? 'text-fade-in' : 'opacity-0'
+                  }`}
+                >
                   {/* Tabs for switching between original and polished text */}
-                  {text && polishedText && !isPolishing && (
+                  {speechState.text && speechState.polishedText && (
                     <div className="flex border-b border-warm-200 dark:border-slate-700 mb-4">
                       <button
                         className={`py-2 px-4 font-serif ${
-                          !showOriginal
+                          !speechState.showOriginal
                             ? "border-b-2 border-warm-600 text-warm-800 dark:text-warm-200"
                             : "text-warm-500 dark:text-warm-400 hover:text-warm-800 dark:hover:text-warm-200"
                         }`}
-                        onClick={() => setShowOriginal(false)}
+                        onClick={() => toggleTextView()}
                       >
                         Polished Text
                       </button>
                       <button
                         className={`py-2 px-4 font-serif ${
-                          showOriginal
+                          speechState.showOriginal
                             ? "border-b-2 border-warm-600 text-warm-800 dark:text-warm-200"
                             : "text-warm-500 dark:text-warm-400 hover:text-warm-800 dark:hover:text-warm-200"
                         }`}
-                        onClick={() => setShowOriginal(true)}
+                        onClick={() => toggleTextView()}
                       >
                         Original Transcription
                       </button>
@@ -544,31 +435,26 @@ function App() {
                   )}
 
                   <div className="min-h-[200px] max-h-[400px] overflow-y-auto scrollbar-thin">
-                    {isPolishing ? (
-                      <div className="prose prose-warm dark:prose-invert max-w-none font-serif text-lg">
-                        <p className="animate-pulse">
-                          {text.trim() ? "Improving your text, please wait..." : "Processing your speech..."}
+                    <div 
+                      className="prose prose-warm dark:prose-invert max-w-none font-serif text-lg leading-relaxed"
+                    >
+                      {speechState.showOriginal ? (
+                        <p>{speechState.text || "Nothing detected from your speech."}</p>
+                      ) : (
+                        <p className={speechState.polishedText.includes("I didn't hear anything") ? "text-warm-500 italic" : ""}>
+                          {speechState.polishedText}
                         </p>
-                      </div>
-                    ) : (
-                      <div className="prose prose-warm dark:prose-invert max-w-none font-serif text-lg leading-relaxed">
-                        {showOriginal ? (
-                          <p>{text || "Nothing detected from your speech."}</p>
-                        ) : (
-                          <p className={polishedText.includes("I didn't catch that") ? "text-warm-500 italic" : ""}>
-                            {polishedText}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
                   {/* Actions for text */}
-                  {(polishedText || (text && showOriginal)) && !recording && (
+                  {(speechState.polishedText || (speechState.text && speechState.showOriginal)) && 
+                   !speechState.isRecording && !speechState.isProcessing && (
                     <div className="mt-6 flex justify-between items-center">
                       <button
                         className="elegant-button flex items-center bg-warm-700"
-                        onClick={startNewRecording}
+                        onClick={handleStartRecording}
                       >
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
@@ -587,7 +473,9 @@ function App() {
                       
                       <button
                         className="elegant-button flex items-center"
-                        onClick={() => copyToClipboard(showOriginal ? text : polishedText)}
+                        onClick={() => copyToClipboard(
+                          speechState.showOriginal ? speechState.text : speechState.polishedText
+                        )}
                       >
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
@@ -623,6 +511,14 @@ function App() {
           • All processing happens locally in your browser
         </p>
       </footer>
+      
+      {/* Settings Modal */}
+      <SettingsModal 
+        isOpen={showSettings} 
+        onClose={() => setShowSettings(false)} 
+        language={language}
+        onLanguageChange={setLanguage}
+      />
     </div>
   ) : (
     <div className="fixed w-screen h-screen bg-black z-10 bg-opacity-[92%] text-white text-2xl font-serif font-semibold flex justify-center items-center text-center">
