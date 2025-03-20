@@ -82,7 +82,7 @@ function App() {
         setProgressItems(prev => ({
           ...prev,
           [e.data.file]: { 
-            text: `Downloaded ${e.data.file}`, 
+            text: `Loaded ${e.data.file}`, 
             percentage: 100,
             total: e.data.total
           }
@@ -140,10 +140,16 @@ function App() {
         break;
       
       case "polished":
-        // Polishing complete
+        // Polishing complete with structured note data
         dispatch({ 
           type: "POLISHING_COMPLETE", 
-          polishedText: e.data.polishedText || e.data.output || "I didn't hear anything. Try speaking a bit louder or check if your microphone is working." 
+          polishedText: e.data.polishedText || "I didn't hear anything. Try speaking a bit louder or check if your microphone is working.",
+          noteData: e.data.noteData || {
+            title: "Untitled Note",
+            category: "Uncategorized",
+            tags: [],
+            content: e.data.polishedText || "I didn't hear anything. Try speaking a bit louder or check if your microphone is working."
+          }
         });
         break;
       
@@ -246,10 +252,10 @@ function App() {
           <div className="flex justify-center items-center">
             <div className="text-center">
               <h1 className="text-4xl font-heading font-bold text-center text-warm-800 dark:text-warm-200">
-                Voice<span className="text-warm-600">Input</span><span className="text-warm-700">+</span>
+                Voice<span className="text-warm-600">Note</span><span className="text-warm-700">+</span>
               </h1>
               <p className="text-center text-warm-600 dark:text-warm-300 mt-2 font-serif italic">
-                Speak naturally, get perfectly organized text
+                Think out loudly, get perfectly organized notes
               </p>
             </div>
           </div>
@@ -260,17 +266,30 @@ function App() {
         {/* Initial Load Button */}
         {speechState.status === null && (
           <div className="mx-auto elegant-card p-8 mb-8 text-center">
-            <p className="text-warm-600 dark:text-warm-300 mb-8 font-serif text-lg">
-              VoiceInput+ converts your voice into polished text using AI models that run directly in your browser.
-              All processing happens locally — no data is sent to any server.
+            <p className="text-warm-600 dark:text-warm-300 mb-8 font-serif flex flex-col items-center justify-center space-y-4">
+              <span className="text-lg font-medium">
+                <strong>VoiceNote+</strong> transforms your speech into polished notes using AI.
+              </span>
+              <span className="text-sm opacity-80 flex items-center justify-center space-x-4">
+                <span>Browser-based AI</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-warm-400 dark:bg-warm-500"></span>
+                <span>WebGPU powered</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-warm-400 dark:bg-warm-500"></span>
+                <span>100% private</span>
+              </span>
             </p>
-            <button
-              className="elegant-button"
-              onClick={() => workerInterfaceRef.current?.loadModels()}
-              disabled={speechState.status !== null}
-            >
-              Load models
-            </button>
+            <div className="flex flex-col items-center">
+              <button
+                className="elegant-button"
+                onClick={() => workerInterfaceRef.current?.loadModels()}
+                disabled={speechState.status !== null}
+              >
+                Load models to start
+              </button>
+              <p className="text-xs text-warm-500 dark:text-warm-400 mt-3 max-w-xs">
+                * Models are downloaded only once on first use.
+              </p>
+            </div>
           </div>
         )}
 
@@ -408,88 +427,151 @@ function App() {
                     speechState.fadeIn ? 'text-fade-in' : 'opacity-0'
                   }`}
                 >
-                  {/* Tabs for switching between original and polished text */}
-                  {speechState.text && speechState.polishedText && (
-                    <div className="flex border-b border-warm-200 dark:border-slate-700 mb-4">
-                      <button
-                        className={`py-2 px-4 font-serif ${
-                          !speechState.showOriginal
-                            ? "border-b-2 border-warm-600 text-warm-800 dark:text-warm-200"
-                            : "text-warm-500 dark:text-warm-400 hover:text-warm-800 dark:hover:text-warm-200"
-                        }`}
-                        onClick={() => toggleTextView()}
-                      >
-                        Polished Text
-                      </button>
-                      <button
-                        className={`py-2 px-4 font-serif ${
-                          speechState.showOriginal
-                            ? "border-b-2 border-warm-600 text-warm-800 dark:text-warm-200"
-                            : "text-warm-500 dark:text-warm-400 hover:text-warm-800 dark:hover:text-warm-200"
-                        }`}
-                        onClick={() => toggleTextView()}
-                      >
-                        Original Transcription
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="min-h-[200px] max-h-[400px] overflow-y-auto scrollbar-thin">
-                    <div 
-                      className="prose prose-warm dark:prose-invert max-w-none font-serif text-lg leading-relaxed"
-                    >
-                      {speechState.showOriginal ? (
-                        <p>{speechState.text || "Nothing detected from your speech."}</p>
-                      ) : (
-                        <p className={speechState.polishedText.includes("I didn't hear anything") ? "text-warm-500 italic" : ""}>
-                          {speechState.polishedText}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Actions for text */}
-                  {(speechState.polishedText || (speechState.text && speechState.showOriginal)) && 
-                   !speechState.isRecording && !speechState.isProcessing && (
-                    <div className="mt-6 flex justify-between items-center">
-                      <button
-                        className="elegant-button flex items-center bg-warm-700"
-                        onClick={handleStartRecording}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-5 w-5 mr-2"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                        Speak Again
-                      </button>
-                      
-                      <button
-                        className="elegant-button flex items-center"
-                        onClick={() => copyToClipboard(
-                          speechState.showOriginal ? speechState.text : speechState.polishedText
+                  {/* Note Layout with Title, Date/Time, and Content */}
+                  <div className="note-container">
+                    {/* Note Header with Title and Date */}
+                    <div className="mb-4 border-b border-warm-200 dark:border-slate-700 pb-3">
+                      <div className="flex justify-between items-start">
+                        <h3 className="text-xl font-heading font-bold text-warm-800 dark:text-warm-200">
+                          {/* Use AI-generated title when available */}
+                          {speechState.noteData?.title || 
+                            (speechState.polishedText ? 
+                              `Note - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 
+                              "Nothing detected"
+                            )
+                          }
+                        </h3>
+                        <div className="flex items-center space-x-3">
+                          {/* Copy to Clipboard Button */}
+                          {(speechState.polishedText || speechState.text) && (
+                            <button
+                              onClick={() => copyToClipboard(speechState.polishedText || speechState.text)}
+                              className="text-warm-500 hover:text-warm-700 dark:text-warm-400 dark:hover:text-warm-200 transition-colors"
+                              aria-label="Copy to clipboard"
+                              title="Copy to clipboard"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                              </svg>
+                            </button>
+                          )}
+                          
+                          {/* Share Button - Only shows if Web Share API is available */}
+                          {(speechState.polishedText || speechState.text) && navigator.share && (
+                            <button
+                              onClick={() => {
+                                // Use Web Share API to share the note content
+                                navigator.share({
+                                  title: 'My Note from VoiceNote+',
+                                  text: speechState.polishedText || speechState.text,
+                                })
+                                .catch(err => console.error('Error sharing:', err));
+                              }}
+                              className="text-warm-500 hover:text-warm-700 dark:text-warm-400 dark:hover:text-warm-200 transition-colors"
+                              aria-label="Share note"
+                              title="Share note"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M15 8a3 3 0 10-2.977-2.63l-4.94 2.47a3 3 0 100 4.319l4.94 2.47a3 3 0 10.895-1.789l-4.94-2.47a3.027 3.027 0 000-.74l4.94-2.47C13.456 7.68 14.19 8 15 8z" />
+                              </svg>
+                            </button>
+                          )}
+                          
+                          {/* Original Transcription Button */}
+                          {speechState.text && (
+                            <button
+                              onClick={() => {
+                                // Toggle original transcription popup visibility
+                                dispatch({ type: "TOGGLE_ORIGINAL_TRANSCRIPTION" });
+                              }}
+                              className="text-warm-500 hover:text-warm-700 dark:text-warm-400 dark:hover:text-warm-200 transition-colors"
+                              aria-label="View original transcription"
+                              title="View original transcription"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        {/* Show category as a badge */}
+                        {speechState.noteData?.category && (
+                          <span className="px-2 py-1 text-xs font-medium bg-warm-100 text-warm-800 dark:bg-slate-700 dark:text-warm-300 rounded-full">
+                            {speechState.noteData.category}
+                          </span>
                         )}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-5 w-5 mr-2"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                        >
-                          <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                          <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-                        </svg>
-                        Copy to Clipboard
-                      </button>
+                        
+                        {/* Show tags */}
+                        {speechState.noteData?.tags && speechState.noteData.tags.length > 0 && 
+                          speechState.noteData.tags.map((tag, index) => (
+                            <span 
+                              key={index} 
+                              className="px-2 py-1 text-xs font-medium bg-warm-50 text-warm-600 dark:bg-slate-800 dark:text-warm-400 rounded-full border border-warm-200 dark:border-slate-600"
+                            >
+                              #{tag}
+                            </span>
+                          ))
+                        }
+                      </div>
+                      <div className="text-sm text-warm-500 dark:text-warm-400 font-serif mt-2">
+                        {new Date().toLocaleString('en-US', { 
+                          weekday: 'long',
+                          month: 'long', 
+                          day: 'numeric', 
+                          year: 'numeric',
+                          hour: 'numeric', 
+                          minute: 'numeric'
+                        })}
+                      </div>
                     </div>
-                  )}
+
+                    {/* Note Content */}
+                    <div className="min-h-[200px] max-h-[400px] overflow-y-auto scrollbar-thin">
+                      <div 
+                        className="prose prose-warm dark:prose-invert max-w-none font-serif text-lg leading-relaxed"
+                      >
+                        {speechState.polishedText && !speechState.showOriginal ? (
+                          <p className={speechState.polishedText.includes("I didn't hear anything") ? "text-warm-500 italic" : ""}>
+                            {speechState.polishedText}
+                          </p>
+                        ) : (
+                          <p className="text-warm-500 italic">Nothing detected from your speech.</p>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Original Transcription Popup */}
+                    {speechState.showOriginalTranscription && speechState.text && (
+                      <div className="mt-4 p-4 bg-warm-50 dark:bg-slate-800 rounded-lg border border-warm-200 dark:border-slate-700">
+                        <div className="flex justify-between items-center mb-2">
+                          <h4 className="text-sm font-medium text-warm-600 dark:text-warm-300">Original Transcription</h4>
+                          <button
+                            onClick={() => dispatch({ type: "TOGGLE_ORIGINAL_TRANSCRIPTION" })}
+                            className="text-warm-500 hover:text-warm-700 dark:text-warm-400 dark:hover:text-warm-200 transition-colors"
+                            aria-label="Close"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        </div>
+                        <p className="text-warm-600 dark:text-warm-400 text-sm font-serif italic">
+                          {speechState.text}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Actions for text - removed Speak Again button */}
+                    {(speechState.polishedText || speechState.text) && 
+                    !speechState.isRecording && !speechState.isProcessing && (
+                      <div className="mt-6 flex justify-end items-center">
+                        {/* Removed Speak Again button */}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -508,7 +590,7 @@ function App() {
           >
             Transformers.js
           </a>{" "}
-          • All processing happens locally in your browser
+          <span className="mx-1 font-xs">•</span> Free <span className="mx-1 font-xs">•</span> Open source
         </p>
       </footer>
       

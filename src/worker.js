@@ -150,10 +150,18 @@ async function polishText({ text }) {
   const messages = [
     {
       role: "system",
-      content: `You are a voice note assistant. Your task is to convert the rambled messy thoughts into clear text. 
-      Please remove any filler words, fix grammar, and improve flow, restructure the text to make it clear.
-      This is not a conversation. You must output ONLY the polished text, with absolutely no additional commentary, explanations, or formatting.
-      Please follow the examples below to understand how to polish the text.`
+      content: `You are a voice note assistant. Your task is to process raw transcribed text into structured notes.
+      
+      For any input text, you MUST return a valid JSON object with the following fields:
+      1. "title": A concise, descriptive title that captures the essence of the note (max 60 characters)
+      2. "category": A single category that best describes the note (e.g., "Work", "Personal", "Ideas", "To-do", "Health", "Finance", "Learning")
+      3. "tags": An array of 1-5 relevant tags as strings
+      4. "content": The polished version of the input text with improved grammar, structure, and clarity
+      
+      For the content, remove filler words, fix grammar issues, improve flow, and restructure as needed to create clear, organized text.
+      
+      Your response MUST be ONLY the JSON object, with no additional text, explanations, or markdown formatting.
+      The JSON must be valid and properly formatted.`
     },
     {
       role: "user",
@@ -161,7 +169,12 @@ async function polishText({ text }) {
     },
     {
       role: "assistant",
-      content: "Hello! Let me tell you about Voice Input Plus. It's a smart tool that turns your spoken words into polished text. The best part? It works right on your computer using your CPU or GPU. Just open your browser and start using it!"
+      content: `{
+  "title": "Introduction to Voice Input Plus",
+  "category": "Technology",
+  "tags": ["AI", "Voice Recognition", "Local Processing", "Tools"],
+  "content": "Hello! Let me tell you about Voice Input Plus. It's a smart tool that turns your spoken words into polished text. The best part? It works right on your computer using your CPU or GPU. Just open your browser and start using it!"
+}`
     },
     {
       role: "user",
@@ -169,7 +182,12 @@ async function polishText({ text }) {
     },
     {
       role: "assistant",
-      content: "I recently had an idea for a memory capsule app. This app lets you save text, images, and videos. You can even chat with an AI assistant. The AI will ask questions to help you explore your thoughts and feelings, especially those that are hard to express alone."
+      content: `{
+  "title": "Memory Capsule App Concept",
+  "category": "Ideas",
+  "tags": ["App Concept", "AI Assistant", "Memory Preservation", "Content Creation"],
+  "content": "I recently had an idea for a memory capsule app. This app lets you save text, images, and videos. You can even chat with an AI assistant that asks questions to help you explore your thoughts and feelings, especially those that are hard to express alone. These memories can then be transformed into various content formats like blog posts, TikTok videos, or Instagram posts. In the future, this technology could allow you to interact with your past self and immerse yourself in old memories using advanced technology. The key is to start documenting your memories now, which is why this memory capsule concept is so important."
+}`
     },
     {
       role: "user",
@@ -224,13 +242,43 @@ async function polishText({ text }) {
       return_dict_in_generate: true,
     });
 
-    // Add a small delay before sending the final result to allow for a smooth transition
-    setTimeout(() => {
+    // Parse the JSON output and validate its structure
+    try {
+      const jsonOutput = JSON.parse(finalOutput);
+      
+      // Validate that the JSON has all required fields
+      if (!jsonOutput.title || !jsonOutput.category || !Array.isArray(jsonOutput.tags) || !jsonOutput.content) {
+        throw new Error("Invalid JSON structure");
+      }
+      
+      // Add a small delay before sending the final structured result
+      setTimeout(() => {
+        self.postMessage({
+          status: "polished",
+          polishedText: jsonOutput.content,
+          noteData: {
+            title: jsonOutput.title,
+            category: jsonOutput.category,
+            tags: jsonOutput.tags,
+            content: jsonOutput.content
+          }
+        });
+      }, 300);
+    } catch (jsonError) {
+      console.error("Error parsing JSON:", jsonError, "Raw output:", finalOutput);
+      
+      // Fallback: If JSON parsing fails, return the raw output as the content
       self.postMessage({
         status: "polished",
         polishedText: finalOutput,
+        noteData: {
+          title: "Untitled Note",
+          category: "Uncategorized",
+          tags: ["auto-generated"],
+          content: finalOutput
+        }
       });
-    }, 300);
+    }
   } catch (error) {
     console.error("Error during text polishing:", error);
     
@@ -238,6 +286,12 @@ async function polishText({ text }) {
     self.postMessage({
       status: "polished",
       polishedText: "Error polishing text. Please try again.",
+      noteData: {
+        title: "Error Processing Note",
+        category: "Uncategorized",
+        tags: ["error"],
+        content: "Error polishing text. Please try again."
+      }
     });
   }
 }

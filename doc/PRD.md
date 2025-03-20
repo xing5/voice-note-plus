@@ -1,7 +1,7 @@
 ## Product Requirements Document (PRD)
 
 ### Product Name
-VoiceInput+
+VoiceNote+
 
 ### Objective
 Develop a simple, web-based AI tool that converts user voice input into polished text. The application will first transcribe the voice input using a speech recognition model, then send the transcription to a dedicated text generation AI model to remove filler words, clarify mumbling, and rephrase sentences for written clarity. It operates entirely locally using Transformer.js with WebGPU acceleration (with CPU fallback when necessary).
